@@ -16,29 +16,6 @@ from tqdm import tqdm
 
 # ==================== CONSTANTS ====================
 
-"""
-:param DATASET_PATH : Path to the dataset; assuming root-level
-:param IMAGE_DIR : Directory to store rendered images; assuming root-level
-
-:param EMBEDDING_DIM_POS : Dimension factor for positional encoding
-:param EMBEDDING_DIM_DIR : Dimension factor for direction encoding
-
-:param NUM_FREQS_POS : Number of frequency bands for positional encoding
-:param NUM_FREQS_DIR : Number of frequency bands for direction encoding
-
-Sampling [HN, HF] (near-far planes)
-Recall that the ray is parameterized by t in [HN, HF]
-:param NB_BINS : How many points are sampled along each ray for rendering
-:param HN : Near plane distance (how close we begin sampling from the camera)
-:param HF : Far plane distance (how far we continue sampling)
-
-Learning and optimization parameters
-:param LEARNING_RATE : Optimizer learning rate
-:param BATCH_SIZE : Batch size
-:param NB_EPOCHS : Number of epochs
-:param SEED : Random seed
-"""
-
 DATASET_PATH = "data/nerf_synthetic/lego/"
 IMAGE_DIR = "images"
 
@@ -58,24 +35,6 @@ NB_EPOCHS = 10
 SEED = 42
 
 # ==================== STATIC LOGSPACE ENCODING ====================
-
-"""
-In a NeRF (Neural Radiance Field), we need to encode 3D positions and directions
-into a higher-dimensional space using sinusoidal functions. This helps the MLP
-represent high-frequency details in the scene.
-
-- We take an input x of shape (batch, 3) where each row is a 3D vector (e.g. a position or a direction).
-- We then create 'freq_bands' via logspace, giving us multiple frequency scales (0..9 means up to 10 bands).
-- For each frequency band, we compute sin(...) and cos(...).
-- We then concatenate these sin/cos features, effectively mapping x -> [sin(ωx), cos(ωx)] across a range of ω values.
-- Finally, we reshape so the output is (batch, encoded_dim), ready for the MLP.
-
-positional_encoding_pos  => For encoding 3D positions (x, y, z).
-positional_encoding_dir  => For encoding 3D directions (dx, dy, dz).
-
-By applying these sinusoidal encodings, the model can learn higher-frequency variations.
-This allows the detailed geometry and textures to be represented.
-"""
 
 
 @jax.jit
@@ -106,12 +65,21 @@ def positional_encoding_dir(
 
 
 def load_transforms(json_path: str) -> dict:
+    """Loads the JSON transforms file with error checking."""
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"Transforms file not found at: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
 
 def load_image(image_path: str) -> np.ndarray:
-    img = imageio.imread(image_path).astype(np.float32) / 255.0
+    """
+    Loads an image with original [0..255] pixel values (float32).
+    Throws error if file is missing.
+    """
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image not found at: {image_path}")
+    img = imageio.imread(image_path).astype(np.float32)  # no / 255 => keep raw
     if img.shape[-1] == 4:
         img = img[..., :3]
     return img
@@ -143,57 +111,92 @@ def generate_rays(
 
 
 def prepare_dataset() -> Tuple[np.ndarray, ...]:
-    """
-    Returns 9 arrays:
-        trn_ro, trn_rd, trn_px,
-        val_ro, val_rd, val_px,
-        tst_ro, tst_rd, tst_px
-    Each "ro, rd" is shape (N,3).
-    Each "px" is shape (N,3), real pixel data from images.
-    """
-    trn = load_transforms(os.path.join(DATASET_PATH, "transforms_train.json"))
-    val = load_transforms(os.path.join(DATASET_PATH, "transforms_val.json"))
-    tst = load_transforms(os.path.join(DATASET_PATH, "transforms_test.json"))
+    print("Preparing dataset...")
 
-    def load_subset(transforms):
+    trn_json = os.path.join(DATASET_PATH, "transforms_train.json")
+    val_json = os.path.join(DATASET_PATH, "transforms_val.json")
+    tst_json = os.path.join(DATASET_PATH, "transforms_test.json")
+
+    trn = load_transforms(trn_json)
+    val = load_transforms(val_json)
+    tst = load_transforms(tst_json)
+
+    def load_subset(transforms, subset_name=""):
         cax = transforms["camera_angle_x"]
         ro_list, rd_list, px_list = [], [], []
-        for fr in transforms["frames"]:
+
+        for idx, fr in enumerate(transforms["frames"]):
+            # Print the file_path from JSON
             fp = fr["file_path"]
             img_path = os.path.join(DATASET_PATH, fp + ".png")
+            print(
+                f"[{subset_name}] idx={idx}, JSON file_path={fp}, full path={img_path}"
+            )
+
+            # Load the image
             img = load_image(img_path)
+            print(
+                f"Loaded {img_path} => shape={img.shape}, dtype={img.dtype}, "
+                f"min={img.min()}, max={img.max()}"
+            )
+
+            # Print raw pixel values for the first 10
+            flat_img = img.reshape(-1, 3)
+            print("First 10 pixels:", flat_img[:10])
+
             H, W = img.shape[:2]
             focal = compute_focal_length(cax, W)
             c2w = np.array(fr["transform_matrix"], dtype=np.float32)
 
+            # Debug: Print the first transform
+            if idx == 0:
+                print(f"[{subset_name}] c2w[0]:\n{c2w}")
+
+            # Generate rays
             ro, rd = generate_rays(c2w, H, W, focal)
             ro_list.append(ro)
             rd_list.append(rd)
 
-            px = img.reshape(-1, 3)
+            # Flatten image row-major
+            px = img.reshape(-1, 3)  # still in [0..255]
             px_list.append(px)
+
+            # Save small patch of the first few images
+            if idx < 2 and subset_name != "test":  # let's skip test set
+                patch = img[:5, :5, :].astype(np.uint8)
+                plt.figure(figsize=(5, 5))
+                plt.imshow(patch)
+                plt.title(f"Patch from {subset_name} idx={idx}")
+                plt.axis("off")
+                patch_path = os.path.join(IMAGE_DIR, f"patch_{subset_name}_{idx}.png")
+                plt.savefig(patch_path)
+                plt.close()
+                print(f"Saved patch from {subset_name}, idx={idx} => {patch_path}")
 
         ro_list = np.concatenate(ro_list, axis=0)
         rd_list = np.concatenate(rd_list, axis=0)
         px_list = np.concatenate(px_list, axis=0)
+
+        print(
+            f"[{subset_name}] Final shapes => ro: {ro_list.shape}, rd: {rd_list.shape}, px: {px_list.shape}"
+        )
         return ro_list, rd_list, px_list
 
-    trn_ro, trn_rd, trn_px = load_subset(trn)
-    val_ro, val_rd, val_px = load_subset(val)
-    tst_ro, tst_rd, tst_px = load_subset(tst)
+    trn_ro, trn_rd, trn_px = load_subset(trn, subset_name="train")
+    val_ro, val_rd, val_px = load_subset(val, subset_name="val")
+    tst_ro, tst_rd, tst_px = load_subset(tst, subset_name="test")
+
+    print("Dataset prepared successfully.")
     return trn_ro, trn_rd, trn_px, val_ro, val_rd, val_px, tst_ro, tst_rd, tst_px
 
 
-# ==================== MODEL  ====================
+# ==================== MODEL ====================
 
 
 class NeRFModel(eqx.Module):
     layers: Sequence[eqx.nn.Linear]
 
     def __init__(self, layer_sizes: Sequence[int], key: jax.random.PRNGKey):
-        """
-        e.g. layer_sizes = [84, 256, 256, 256, 256, 4]
-        """
         assert layer_sizes[-1] == 4
         keys = jax.random.split(key, len(layer_sizes))
         self.layers = [
@@ -204,28 +207,24 @@ class NeRFModel(eqx.Module):
     def __call__(
         self, o: Float[Array, "batch 3"], d: Float[Array, "batch 3"]
     ) -> Tuple[Float[Array, "batch 3"], Float[Array, "batch"]]:
-        """
-        We'll do shape => (batch, input_dim). Then for each layer, we transpose => (in_features, batch).
-        Then do weight @ x => (out_features, batch). Then transpose => (batch, out_features).
-        """
-        emb_o = positional_encoding_pos(o)  # shape => (batch, 6*NUM_FREQS_POS)
-        emb_d = positional_encoding_dir(d)  # shape => (batch, 6*NUM_FREQS_DIR)
+        emb_o = positional_encoding_pos(o)
+        emb_d = positional_encoding_dir(d)
         x = jnp.concatenate([emb_o, emb_d], axis=-1)
-
-        for layer_i, layer in enumerate(self.layers[:-1]):
-            xT = x.T  # shape => (in_features, batch)
-            outT = layer.weight @ xT + layer.bias[:, None]  # => (out_features, batch)
-            x = jax.nn.relu(outT.T)  # => (batch, out_features)
+        for layer in self.layers[:-1]:
+            xT = x.T
+            outT = layer.weight @ xT + layer.bias[:, None]
+            x = jax.nn.relu(outT.T)
 
         xT = x.T
         outT = self.layers[-1].weight @ xT + self.layers[-1].bias[:, None]
-        out = outT.T  # => (batch, 4)
+        out = outT.T  # (batch,4)
 
-        c, sigma = out[:, :3], jax.nn.relu(out[:, 3])
+        c = jax.nn.sigmoid(out[:, :3])  # [0..1]
+        sigma = jax.nn.relu(out[:, 3])  # >= 0
         return c, sigma
 
 
-# ==================== RENDERING  ====================
+# ==================== RENDERING ====================
 
 
 def compute_accumulated_transmittance(
@@ -261,17 +260,15 @@ def make_render_rays(
         t = lower + (upper - lower) * u
 
         delta = jnp.concatenate(
-            [t[:, 1:] - t[:, :-1], jnp.full((batch_size, 1), 1e10)], axis=1
+            [t[:, 1:] - t[:, :-1], jnp.full((batch_size, 1), 1e10)],
+            axis=1,
         )
 
         x = ray_origins[:, None, :] + t[:, :, None] * ray_directions[:, None, :]
-        x_flat = x.reshape(-1, 3)  # => (batch_size*nb_bins, 3)
-        d_flat = jnp.repeat(ray_directions, nb_bins, axis=0)  # => same shape
+        x_flat = x.reshape(-1, 3)
+        d_flat = jnp.repeat(ray_directions, nb_bins, axis=0)
 
-        # shape => (batch_size*nb_bins, 3) for positions, directions
-        colors_flat, sigma_flat = model(
-            x_flat, d_flat
-        )  # => each = (batch_size*nb_bins, 3/1)
+        colors_flat, sigma_flat = model(x_flat, d_flat)
         colors = colors_flat.reshape(batch_size, nb_bins, 3)
         sigma = sigma_flat.reshape(batch_size, nb_bins)
 
@@ -306,13 +303,9 @@ def make_update_step(
     ) -> Tuple[Any, Any, Float[Array, ""]]:
         def loss_fn(fp):
             model_ = eqx.combine(fp, static_model)
-            pred = render_rays_fn(
-                model_,
-                ray_origins,
-                ray_directions,
-                key,
-            )
-            return jnp.mean((pred - target) ** 2)
+            pred = render_rays_fn(model_, ray_origins, ray_directions, key)
+            # pred in [0..1], target in [0..255], so scale pred
+            return jnp.mean((pred * 255.0 - target) ** 2)
 
         loss, grads = jax.value_and_grad(loss_fn)(float_params)
         updates, opt_state = optimizer.update(grads, opt_state, float_params)
@@ -337,17 +330,18 @@ def train(
     static_model = eqx.filter(full_model, lambda x: not eqx.is_array(x))
     opt_state = optimizer.init(float_params)
 
-    update_step = make_update_step(optimizer, static_model, render_rays_fn)
+    update_fn = make_update_step(optimizer, static_model, render_rays_fn)
 
     rays_o = jnp.array(train_rays_o, dtype=jnp.float32)
     rays_d = jnp.array(train_rays_d, dtype=jnp.float32)
-    colors = jnp.array(train_colors, dtype=jnp.float32).reshape(-1, 3)
+    colors = jnp.array(train_colors, dtype=jnp.float32).reshape(-1, 3)  # [0..255]
 
     num_rays = rays_o.shape[0]
     num_batches = max(1, num_rays // BATCH_SIZE)
 
     loss_log = []
 
+    run_name = input("Enter the wandb run name: ")
     wandb.init(
         project="minNeRF",
         config={
@@ -364,12 +358,14 @@ def train(
             "layer_sizes": layer_sizes,
             "seed": SEED,
         },
-        name="minNeRF train",
+        name=run_name,
         reinit=True,
     )
 
-    step = 0
+    print("Sample train colors:", train_colors[:10])
+    print("Train colors range => min:", train_colors.min(), "max:", train_colors.max())
 
+    step = 0
     for epoch in range(NB_EPOCHS):
         perm_key = jax.random.PRNGKey(SEED + epoch)
         perm = jax.random.permutation(perm_key, num_rays)
@@ -386,16 +382,11 @@ def train(
 
             batch_o = ro_epoch[start_i:end_i]
             batch_d = rd_epoch[start_i:end_i]
-            batch_c = c_epoch[start_i:end_i]
+            batch_c = c_epoch[start_i:end_i]  # [0..255]
 
             step_key = jax.random.PRNGKey(SEED + epoch * 10000 + i)
-            float_params, opt_state, loss_val = update_step(
-                float_params,
-                opt_state,
-                batch_o,
-                batch_d,
-                batch_c,
-                step_key,
+            float_params, opt_state, loss_val = update_fn(
+                float_params, opt_state, batch_o, batch_d, batch_c, step_key
             )
             epoch_loss += loss_val.item()
 
@@ -404,21 +395,21 @@ def train(
                 step=step,
             )
             step += 1
-
             pbar.set_postfix(loss=loss_val.item())
 
+            # Optionally render a validation image halfway
             if i == num_batches // 4:
-                print(f"Rendering validation image at Epoch {epoch+1} (Halfway)...")
-                H, W = 400, 400
-                if len(val_ro) >= H * W:
-                    rendered_img = test_render(
+                print(f"Rendering val image at epoch {epoch+1} halfway.")
+                Hval, Wval = 400, 400
+                if len(val_ro) >= Hval * Wval:
+                    val_img = test_render(
                         render_rays_fn,
                         eqx.combine(float_params, static_model),
                         val_ro,
                         val_rd,
                         img_index=0,
-                        H=H,
-                        W=W,
+                        H=Hval,
+                        W=Wval,
                         image_dir=IMAGE_DIR,
                         key=jax.random.PRNGKey(SEED + 999),
                     )
@@ -426,28 +417,28 @@ def train(
                         {
                             "rendered_image_half_epoch": epoch + 1,
                             "image_index": 0,
-                            "rendered_image": wandb.Image(rendered_img),
+                            "rendered_image": wandb.Image(val_img),
                         },
                         step=step,
                     )
 
         avg_loss = epoch_loss / num_batches
         loss_log.append(avg_loss)
-        print(f"Epoch {epoch+1}/{NB_EPOCHS} finished. Average Loss={avg_loss:.6f}")
-
+        print(f"Epoch {epoch+1}/{NB_EPOCHS} => Avg Loss: {avg_loss:.6f}")
         wandb.log({"epoch_loss": avg_loss, "epoch": epoch + 1}, step=step)
 
-        print(f"Rendering validation image at Epoch {epoch+1} (End of Epoch)...")
-        H, W = 400, 400
-        if len(val_ro) >= H * W:
-            rendered_img = test_render(
+        # Render at end of epoch
+        print(f"Rendering val image at epoch {epoch+1} end.")
+        Hval, Wval = 400, 400
+        if len(val_ro) >= Hval * Wval:
+            val_img = test_render(
                 render_rays_fn,
                 eqx.combine(float_params, static_model),
                 val_ro,
                 val_rd,
                 img_index=0,
-                H=H,
-                W=W,
+                H=Hval,
+                W=Wval,
                 image_dir=IMAGE_DIR,
                 key=jax.random.PRNGKey(SEED + 999),
             )
@@ -455,7 +446,7 @@ def train(
                 {
                     "rendered_image_epoch": epoch + 1,
                     "image_index": 0,
-                    "rendered_image": wandb.Image(rendered_img),
+                    "rendered_image": wandb.Image(val_img),
                 },
                 step=step,
             )
@@ -485,9 +476,6 @@ def test_render(
     image_dir: str,
     key: jax.random.PRNGKey,
 ) -> np.ndarray:
-    """
-    Renders an image and logs it to wandb.
-    """
     os.makedirs(image_dir, exist_ok=True)
 
     start = img_index * H * W
@@ -506,28 +494,19 @@ def test_render(
         batch_o = ro[chunk_start:chunk_end]
         batch_d = rd[chunk_start:chunk_end]
 
-        rendered = render_rays_fn(
-            model,
-            batch_o,
-            batch_d,
-            key,
-        )
+        rendered = render_rays_fn(model, batch_o, batch_d, key)
         data.append(rendered)
 
     img = jnp.concatenate(data, axis=0).reshape(H, W, 3)
     img_np = jax.device_get(img)
 
     plt.figure(figsize=(W / 100, H / 100), dpi=100)
-    plt.imshow(img_np)
+    plt.imshow(img_np)  # [0..1] from model
     plt.axis("off")
     plt.tight_layout()
     os.makedirs(image_dir, exist_ok=True)
-    img_path = os.path.join(image_dir, f"img_{img_index}.png")
-    plt.savefig(
-        img_path,
-        bbox_inches="tight",
-        pad_inches=0,
-    )
+    out_path = os.path.join(image_dir, f"img_{img_index}.png")
+    plt.savefig(out_path, bbox_inches="tight", pad_inches=0)
     plt.close()
 
     return img_np
@@ -537,66 +516,63 @@ def test_render(
 
 
 def main():
-    (trn_ro, trn_rd, trn_px, val_ro, val_rd, val_px, tst_ro, tst_rd, tst_px) = (
-        prepare_dataset()
-    )
+    print("Beginning dataset checks and loading...")
 
-    train_colors = trn_px
+    (
+        trn_ro,
+        trn_rd,
+        trn_px,
+        val_ro,
+        val_rd,
+        val_px,
+        tst_ro,
+        tst_rd,
+        tst_px,
+    ) = prepare_dataset()
 
-    # Compute input dimension: positions + directions
+    # Confirm the shape/range of train px
+    print("train px shape:", trn_px.shape, "dtype:", trn_px.dtype)
+    print("First 10 train pixels:\n", trn_px[:10])
+    print("Range in train px => min:", trn_px.min(), ", max:", trn_px.max())
+
+    # Optionally visualize entire first train image if (H=400, W=400)
+    H, W = 400, 400
+    if len(trn_px) >= H * W:
+        first_img = trn_px[: H * W].reshape(H, W, 3).astype(np.uint8)
+        plt.figure()
+        plt.imshow(first_img)
+        plt.title("First Train Image (Raw 0..255)")
+        plt.axis("off")
+        sample_path = os.path.join(IMAGE_DIR, "first_train_image_raw.png")
+        plt.savefig(sample_path)
+        plt.close()
+        print(f"Saved entire first training image => {sample_path}")
+
+    # Setup model
     pos_enc_size = 3 * (2 * NUM_FREQS_POS)
     dir_enc_size = 3 * (2 * NUM_FREQS_DIR)
     input_dim = pos_enc_size + dir_enc_size
-
     layer_sizes = [input_dim, 256, 256, 256, 256, 4]
+
     key = jax.random.PRNGKey(SEED)
     full_model = NeRFModel(layer_sizes=layer_sizes, key=key)
 
-    # Create the jitted rendering function for [HN, HF] with NB_BINS
     render_rays_fn = make_render_rays(NB_BINS, HN, HF)
-
     optimizer = optax.adam(LEARNING_RATE)
 
-    print("Starting training...")
+    print("Starting training now, with unnormalized images in [0..255].")
     trained_model, opt_state, loss_history = train(
         full_model,
         optimizer,
         trn_ro,
         trn_rd,
-        train_colors,
+        trn_px,  # pass raw [0..255]
         render_rays_fn,
         layer_sizes,
         val_ro,
         val_rd,
     )
-    print("Training complete.")
-
-    os.makedirs(IMAGE_DIR, exist_ok=True)
-    np.save(os.path.join(IMAGE_DIR, "training_loss.npy"), np.array(loss_history))
-
-    # Easy way to render an image
-    """
-    H, W = 400, 400
-    if len(val_ro) >= H * W:
-        print("Rendering final validation image 0...")
-        rendered_img = test_render(
-            render_rays_fn,
-            trained_model,
-            val_ro,
-            val_rd,
-            img_index=0,
-            H=H,
-            W=W,
-            image_dir=IMAGE_DIR,
-            key=jax.random.PRNGKey(SEED + 999),
-        )
-    """
-
-    if not wandb.run:
-        print("Train didn't finish logging?")
-
-    if wandb.run:
-        wandb.finish()
+    print("Training completed.")
 
 
 if __name__ == "__main__":

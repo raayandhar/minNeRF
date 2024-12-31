@@ -1,0 +1,84 @@
+{
+  "os":  "Linux-6.8.0-49-generic-x86_64-with-glibc2.39",
+  "python":  "CPython 3.12.8",
+  "startedAt":  "2024-12-31T20:15:13.346852Z",
+  "program":  "/home/raayan/projects/minNeRF/nerf.py",
+  "codePath":  "nerf.py",
+  "git":  {
+    "remote":  "https://github.com/raayandhar/minNeRF.git",
+    "commit":  "c3a510d1c09e3b5a5c15311516ef3b1d1045e532"
+  },
+  "email":  "raayan.dhar@gmail.com",
+  "root":  "/home/raayan/projects/minNeRF",
+  "host":  "uril-1",
+  "executable":  "/home/raayan/projects/minNeRF/env/bin/python",
+  "codePathLocal":  "nerf.py",
+  "cpu_count":  32,
+  "cpu_count_logical":  64,
+  "gpu":  "NVIDIA L40S",
+  "gpu_count":  8,
+  "disk":  {
+    "/":  {
+      "total":  "68652367872",
+      "used":  "22400184320"
+    }
+  },
+  "memory":  {
+    "total":  "540864323584"
+  },
+  "cpu":  {
+    "count":  32,
+    "countLogical":  64
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada"
+    }
+  ],
+  "cudaVersion":  "12.6"
+}
