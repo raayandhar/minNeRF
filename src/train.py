@@ -1,5 +1,3 @@
-# src/train.py
-
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -41,9 +39,9 @@ def compute_loss(
     rays_directions: Array_B3f,
     target_rgb: Array_B3f,
     key: PRNGKeyArray,
-) -> Float[Array, ()]:
+) -> Float[Array, ""]:
     points = sample_points(rays_origins, rays_directions, NUM_SAMPLES, NEAR, FAR, key)
-    rendered_rgb = render_rays(NeRF, points, rays_directions)
+    rendered_rgb = render_rays(model, points, rays_directions)
     loss = jnp.mean((rendered_rgb - target_rgb) ** 2)
     return loss
 
@@ -52,14 +50,13 @@ def step(
     model: NeRF,
     optimizer: optax.GradientTransformation,
     opt_state: optax.OptState,
-    rays_origins: Array_B3f,
-    rays_directions: Array_B3f,
+    rays: Array_B3f,
     target_rgb: Array_B3f,
     key: PRNGKeyArray,
-) -> Tuple[NeRF, optax.OptState, Float[Array, ()]]:
-    loss_fn = lambda m: compute_loss(
-        model, rays_origins, rays_directions, target_rgb, key
-    )
+) -> Tuple[NeRF, optax.OptState, Float[Array, ""]]:
+    rays_origins, rays_directions = rays[:, :15], rays[:, 15:30]  # Split encoded inputs
+
+    loss_fn = lambda m: compute_loss(m, rays_origins, rays_directions, target_rgb, key)
     loss, grads = jax.value_and_grad(loss_fn)(model)
     updates, opt_state = optimizer.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
@@ -124,17 +121,23 @@ def train(
     data_iter,
     key: PRNGKeyArray,
 ):
+    import time
+
     for epoch in range(NUM_EPOCHS):
-        for batch_idx, (rays_o, rays_d, target_rgb) in enumerate(data_iter):
+        start_time = time.time()
+        for batch_idx, (rays, target_rgb) in enumerate(data_iter):
             key, subkey = jax.random.split(key)
             model, opt_state, loss = step(
                 model,
                 optimizer,
                 opt_state,
-                rays_o,
-                rays_d,
+                rays,  # Combined encoded rays origins and directions
                 target_rgb,
                 subkey,
             )
             if batch_idx % 100 == 0:
-                print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss:.4f}")
+                print(
+                    f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss:.4f}, "
+                    f"Time per batch: {time.time() - start_time:.4f} seconds"
+                )
+                start_time = time.time()

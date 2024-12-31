@@ -5,7 +5,7 @@ from jaxtyping import Float, Array
 import matplotlib.pyplot as plt
 
 Array_BDf = Float[Array, "batch dim"]
-Array_B_D2Lf = Float[Array, "batch (dim * 2 * L"]
+Array_B_D2Lf = Float[Array, "batch dim2L"]
 Array_HW3f = Float[Array, "height width 3"]
 
 

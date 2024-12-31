@@ -1,10 +1,13 @@
 # src/config.py
 
 from typing import Tuple
+import os
 
-# Dataset configurations
-DATASET_PATH: str = "path/to/nerf_synthetic/lego"
-BATCH_SIZE: int = 1024
+DATASET_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../data/nerf_synthetic/lego")
+)
+
+BATCH_SIZE: int = 1
 NUM_EPOCHS: int = 10
 
 # NeRF model configurations
