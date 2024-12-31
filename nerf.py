@@ -221,6 +221,7 @@ class NeRFModel(eqx.Module):
         outT = self.layers[-1].weight @ xT + self.layers[-1].bias[:, None]
         out = outT.T  # => (batch, 4)
 
+        # Debugging
         c, sigma = out[:, :3], jax.nn.relu(out[:, 3])
         return c, sigma
 
@@ -407,7 +408,17 @@ def train(
 
             pbar.set_postfix(loss=loss_val.item())
 
-            if i == num_batches // 4:
+            # Remove later, just debugging
+            sample_idx = 0
+            model_ = eqx.combine(float_params, static_model)
+            colors, sigmas = model_(
+                batch_o[sample_idx : sample_idx + 1],
+                batch_d[sample_idx : sample_idx + 1],
+            )
+            print("Colors: ", colors)
+            print("Sigmas: ", sigmas)
+
+            if i % 100 == 0:
                 print(f"Rendering validation image at Epoch {epoch+1} (Halfway)...")
                 H, W = 800, 800
                 if len(val_ro) >= H * W:
