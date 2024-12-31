@@ -26,11 +26,14 @@ def main():
 
 
 def test_model(model, data_iter, key):
-    rays, target_rgb = next(data_iter)  # Get one batch
+    rays, target_rgb = next(data_iter)
+    print(f"Input rays shape: {rays.shape}")
+    print(f"Target RGB shape: {target_rgb.shape}")
+
     key, subkey = random.split(key)
-    output = model(rays)  # Forward pass
-    print("Model output shape:", output.shape)
-    print("Target RGB shape:", target_rgb.shape)
+    output = model(rays)
+    print(f"Model output shape: {output.shape}")
+    assert output.shape[0] == rays.shape[0], "Output batch size mismatch."
 
 
 if __name__ == "__main__":

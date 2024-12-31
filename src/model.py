@@ -17,15 +17,19 @@ class NeRF(eqx.Module):
     def __init__(self, layer_sizes: Sequence[int], key: PRNGKeyArray):
         keys = jax.random.split(key, len(layer_sizes))
         self.layers = [
-            eqx.nn.Linear(in_features=in_size, out_features=out_size, key=key_i)
-            for in_size, out_size, key_i in zip(layer_sizes[:-1], layer_sizes[1:], keys)
+            eqx.nn.Linear(in_features=in_features, out_features=out_features, key=key_i)
+            for in_features, out_features, key_i in zip(
+                layer_sizes[:-1], layer_sizes[1:], keys
+            )
         ]
 
     @eqx.filter_jit
     def __call__(self, x: BatchDim) -> BatchOut:
-        for layer in self.layers[:-1]:
+        assert (
+            len(x.shape) == 2
+        ), f"Expected shape (batch_size, features), got {x.shape}"
+        for i, layer in enumerate(self.layers[:-1]):
             x = jax.nn.relu(layer(x))
-
         x = self.layers[-1](x)
         return x
 
